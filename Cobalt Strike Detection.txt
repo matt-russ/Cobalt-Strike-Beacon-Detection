@@ -49,3 +49,87 @@ process.command_line is 'C:\\windows\\syswow64\\msinfo32.exe' OR
 process.command_line is 'C:\\windows\\syswow64\\RuntimeBroker.exe' OR
 process.command_line is 'C:\\windows\\syswow64\\explorer.exe' OR
 process.command_line is 'C:\\windows\\syswow64\\WindowsPowerShell\\v1.0\\powershell.exe')
+
+
+Detects when Cobalt Strike's 32bit payload "Beacon" is injected into a child process of explorer.exe, which is a common technique used to blend in. When using Cobalt Strike, the default option is to use the 32 bit payload. Using the 32 bit payload creates some interesting detection opportunities. When Beacon is running on a target computer, it is common for the operator (the person using Cobalt Strike) to inject the payload into another process that blends in more. When the 32 bit payload is being injected into 64 bit processes (64 bit processes are usually the ones running), the only way Beacon can access/interact with the 64 bit processes is through the C:\Windows\sysnative\ directory. Therefore, when the operator issues the spawn to command to inject Beacon into a process that blends in more, it will have the command line of only the full path of the process they are injecting into (C:\Windows\sysnative\<whatever process they are injecting into>) which rarely occurs. This one will require more white-listing and is more prone to false positives.
+
+((process.ancestry_path contains '\\explorer.exe') AND
+(process.path contains '\\system32\\' AND
+process.command_line contains '\\sysnative\\')) AND
+process.command_line contains NOT ' ' AND
+process.command_line contains NOT '/' AND
+process.command_line contains NOT ',' AND
+process.command_line contains NOT '-' AND
+process.command_line contains NOT '(' AND
+process.command_line contains NOT ':' AND
+process.command_line contains NOT '\\\\' AND
+
+
+Looking for LM
+
+((process.command_line contains '\\sysnative\\dllhost.exe' OR
+process.command_line contains '\\sysnative\\rundll32.exe' OR
+process.command_line contains '\\sysnative\\svchost.exe' OR
+process.command_line contains '\\sysnative\\werfault.exe' OR
+process.command_line contains '\\sysnative\\searchprotocolhost.exe' OR
+process.command_line contains '\\sysnative\\regsvr32.exe' OR
+process.command_line contains '\\sysnative\\gpupdate.exe' OR
+process.command_line contains '\\sysnative\\msiexec.exe' OR
+process.command_line contains '\\sysnative\\eventvwr.exe' OR
+process.command_line contains '\\sysnative\\taskeng.exe' OR
+process.command_line contains '\\sysnative\\spoolsv.exe' OR
+process.command_line contains '\\sysnative\\runonce.exe' OR
+process.command_line contains '\\sysnative\\WUAUCLT.exe' OR
+process.command_line contains '\\sysnative\\conhost.exe' OR
+process.command_line contains '\\sysnative\\control.exe' OR
+process.command_line contains '\\sysnative\\help.exe' OR
+process.command_line contains '\\sysnative\\LogonUI.exe' OR
+process.command_line contains '\\sysnative\\print.exe' OR
+process.command_line contains '\\sysnative\\audiodg.exe' OR
+process.command_line contains '\\sysnative\\RuntimeBroker.exe' OR
+process.command_line contains '\\sysnative\\msinfo32.exe') AND
+(network.address contains '.' OR
+network.dns_query contains '.' OR
+file.path contains '\\pipe\\'))
+
+
+Cobalt Strike’s Beacon, PowerShell Empire, PoshC2, and Metasploit’s Meterpreter payload all have their own implementation of the GetSystem command. Interestingly, the GetSystem command implemented in their payloads all behave in the same manner. All of these tools first attempt to use “named pipe impersonation” to achieve SYSTEM privileges. This involves creating a Windows Service to execute as NT AUTHORITY\SYSTEM and feeding data to it through a named pipe that is randomly created by the malicious payload. The next method is to schedule rundll32.exe to run as SYSTEM and execute the payload stored on disk as a DLL. 
+
+((((process.path contains 'powershell' OR
+process.path contains 'pwsh.exe' OR
+process.path contains 'cmd.exe' OR
+process.path contains 'wmic.exe') AND
+(process.command_line contains 'Write-Output' OR
+process.command_line contains 'write' OR
+process.command_line contains 'echo')) AND
+(process.command_line contains '\\\\.\\pipe\\')) OR
+(process.command_line contains 'rundll32.exe' AND
+process.command_line contains ',a /p:'))
+
+
+Cobalt Strike has many options to transfer payloads to additional targets. One of the most popular method's is to use the copy command. This command will copy the payload over to the next target via the C$ share. You will need to white-list some processes.
+
+((process.command_line contains 'copy ' OR
+process.command_line contains 'cpi ' OR
+process.command_line contains 'cp ' OR
+process.command_line contains 'Copy-item') AND
+((process.command_line contains '192.168.' OR
+process.command_line contains '10.' OR
+process.command_line contains '172.') AND
+(process.command_line contains '\\c$\\')))
+
+
+When using Cobalt Strike, you can use the shell command. This command will spawn a command prompt and prepend any commands you want to run with "/C". This will detect a variety of the discovery commands that are recommended to run what you land on a new target system.
+
+(process.command_line contains '/C nltest /dclist:' OR
+process.command_line contains '/C nltest /domain_trusts' OR
+process.command_line contains '/C whoami /all' OR
+(((process.command_line contains '/C net group ' OR
+process.command_line contains '/C net localgroup ') AND
+(process.command_line contains 'administrator' OR
+process.command_line contains 'Domain Controller' OR
+process.command_line contains 'admin' OR
+process.command_line contains 'Domain Computers')) AND
+(process.command_line contains '/domain')) OR
+process.command_line contains '/C net view /domain' OR
+process.command_line contains '/C dir %HOMEDRIVE%%HOMEPATH%')
